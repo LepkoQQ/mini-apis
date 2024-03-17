@@ -21,12 +21,14 @@ def auth_to_spotify(current_app):
     return sp
 
 
+spotify_image_cache_dir = "spotify-image-cache"
+
+
 def cache_spotify_image(current_app, image_url):
     if not image_url:
         return None
 
-    cache_dir_name = "spotify-image-cache"
-    cache_dir_path = os.path.join(current_app.instance_path, cache_dir_name)
+    cache_dir_path = os.path.join(current_app.instance_path, spotify_image_cache_dir)
 
     image_name = f"{urlsplit(image_url).path.strip('/')}.jpg"
     image_save_path = os.path.join(cache_dir_path, image_name)
@@ -34,7 +36,7 @@ def cache_spotify_image(current_app, image_url):
     if os.path.exists(image_save_path):
         # update modified time
         os.utime(image_save_path)
-        return f"/{cache_dir_name}/{image_name}"
+        return f"/{spotify_image_cache_dir}/{image_name}"
 
     max_cache_count = 100
     half_cache_count = max_cache_count // 2
@@ -58,7 +60,7 @@ def cache_spotify_image(current_app, image_url):
             im = ImageEnhance.Color(im).enhance(1.5)
             os.makedirs(os.path.dirname(image_save_path), exist_ok=True)
             im.save(image_save_path, format="JPEG", quality=60)
-        return f"/{cache_dir_name}/{image_name}"
+        return f"/{spotify_image_cache_dir}/{image_name}"
     except Exception as e:
         print(f"Error: {e}")
         return None

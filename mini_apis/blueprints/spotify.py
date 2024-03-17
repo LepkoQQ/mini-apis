@@ -1,6 +1,12 @@
-from flask import Blueprint, current_app
+import os
 
-from ..spotify_utils import auth_to_spotify, cache_spotify_image
+from flask import Blueprint, current_app, request, send_from_directory
+
+from ..spotify_utils import (
+    auth_to_spotify,
+    cache_spotify_image,
+    spotify_image_cache_dir,
+)
 from .utils import get_blueprint_routes
 
 bp = Blueprint("spotify", __name__, url_prefix="/spotify")
@@ -10,6 +16,12 @@ bp = Blueprint("spotify", __name__, url_prefix="/spotify")
 def index():
     routes = get_blueprint_routes(current_app, bp)
     return {"message": f"{bp.name} api index", "routes": routes}
+
+
+@bp.route(f"/{spotify_image_cache_dir}/<path:path>")
+def image_cache(path):
+    cache_dir_path = os.path.join(current_app.instance_path, spotify_image_cache_dir)
+    return send_from_directory(cache_dir_path, path)
 
 
 @bp.route("/now-playing")
@@ -63,6 +75,9 @@ def now_playing():
         None,
     )
     image_manipulated_url = cache_spotify_image(current_app, image_url)
+    if image_manipulated_url:
+        prefix = f"{request.host_url.rstrip('/')}{os.path.dirname(request.path)}"
+        image_manipulated_url = f"{prefix}{image_manipulated_url}"
 
     image_obj = {
         "original_url": image_url,
