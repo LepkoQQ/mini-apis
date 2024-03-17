@@ -1,4 +1,9 @@
+import base64
+import io
+
+import requests
 from flask import Blueprint, current_app
+from PIL import Image, ImageEnhance
 
 from ..spotify_auth import auth_to_spotify
 from .utils import get_blueprint_routes
@@ -51,15 +56,33 @@ def now_playing():
     artist_name = ", ".join(
         [artist.get("name") for artist in artists if artist.get("name")]
     )
-    item_obj = {
+    info_obj = {
         "title": title,
         "album": album_name,
         "artist": artist_name,
+        "combined": f"{artist_name} - {title}",
     }
 
-    image = images[0]["url"] if images else None
+    image_url = next(
+        (img.get("url") for img in images if img.get("width") <= 300),
+        None,
+    )
+    image_data = None
+
+    r = requests.get(image_url, stream=True)
+    r.raw.decode_content = True
+    with Image.open(r.raw) as im:
+        print(image_url, im.format, f"{im.size}x{im.mode}")
+        im = im.resize((240, 240))
+        im = im.convert("RGB")
+        im = ImageEnhance.Color(im).enhance(1.5)
+        buffer = io.BytesIO()
+        im.save(buffer, format="JPEG", quality=60)
+        image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
     image_obj = {
-        "original_url": image,
+        "original_url": image_url,
+        "data_url": f"data:image/jpeg;base64,{image_data}",
     }
 
     return {
@@ -67,6 +90,6 @@ def now_playing():
         "ok": True,
         "is_playing": True,
         "progress": progress_obj,
-        "item": item_obj,
+        "info": info_obj,
         "image": image_obj,
     }
