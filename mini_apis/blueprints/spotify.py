@@ -1,11 +1,6 @@
-import os
-from urllib.parse import urlsplit
-
-import requests
 from flask import Blueprint, current_app
-from PIL import Image, ImageEnhance
 
-from ..spotify_auth import auth_to_spotify
+from ..spotify_utils import auth_to_spotify, cache_spotify_image
 from .utils import get_blueprint_routes
 
 bp = Blueprint("spotify", __name__, url_prefix="/spotify")
@@ -63,32 +58,11 @@ def now_playing():
         "combined": f"{artist_name} - {title}",
     }
 
-    image_manipulated_url = None
     image_url = next(
         (img.get("url") for img in images if img.get("width") <= 300),
         None,
     )
-    if image_url:
-        image_cache_dir_name = "spotify-image-cache"
-        image_cache_dir = os.path.join(current_app.instance_path, image_cache_dir_name)
-        image_path = f"{urlsplit(image_url).path.strip('/')}.jpg"
-        image_save_path = os.path.join(image_cache_dir, image_path)
-        if os.path.exists(image_save_path):
-            image_manipulated_url = f"/{image_cache_dir_name}/{image_path}"
-        else:
-            os.makedirs(os.path.dirname(image_save_path), exist_ok=True)
-            try:
-                r = requests.get(image_url, stream=True)
-                r.raw.decode_content = True
-                with Image.open(r.raw) as im:
-                    im = im.resize((240, 240))
-                    im = im.convert("RGB")
-                    im = ImageEnhance.Color(im).enhance(1.5)
-                    im.save(image_save_path, format="JPEG", quality=60)
-                image_manipulated_url = f"/{image_cache_dir_name}/{image_path}"
-            except Exception as e:
-                print(f"Error: {e}")
-                pass
+    image_manipulated_url = cache_spotify_image(current_app, image_url)
 
     image_obj = {
         "original_url": image_url,
