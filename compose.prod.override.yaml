@@ -15,10 +15,10 @@ services:
       - traefik
     labels:
       - traefik.enable=true
-      - traefik.http.routers.whoami-http.rule=Host(`${DOMAIN_NAME}`)
-      - traefik.http.routers.whoami-http.entrypoints=web
-      - traefik.http.routers.whoami-https.rule=Host(`${DOMAIN_NAME}`)
-      - traefik.http.routers.whoami-https.entrypoints=websecure
-      - traefik.http.routers.whoami-https.tls=true
-      - traefik.http.routers.whoami-https.tls.certresolver=le
+      - traefik.http.routers.mini-apis-http.rule=Host(`${DOMAIN_NAME}`)
+      - traefik.http.routers.mini-apis-http.entrypoints=web
+      - traefik.http.routers.mini-apis-https.rule=Host(`${DOMAIN_NAME}`)
+      - traefik.http.routers.mini-apis-https.entrypoints=websecure
+      - traefik.http.routers.mini-apis-https.tls=true
+      - traefik.http.routers.mini-apis-https.tls.certresolver=le
     restart: unless-stopped
