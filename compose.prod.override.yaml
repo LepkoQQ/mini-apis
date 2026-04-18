@@ -1,0 +1,24 @@
+networks:
+  traefik:
+    external: true
+
+services:
+  web:
+    command: !reset null
+    container_name: mini-apis
+    volumes: !override
+      - ./data:/app/data:rw
+    environment: !override
+      - VALSTORE_DB_PATH=/app/data/valstore.db
+      - VALSTORE_API_KEY=${VALSTORE_API_KEY}
+    networks:
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami-http.rule=Host(`${DOMAIN_NAME}`)
+      - traefik.http.routers.whoami-http.entrypoints=web
+      - traefik.http.routers.whoami-https.rule=Host(`${DOMAIN_NAME}`)
+      - traefik.http.routers.whoami-https.entrypoints=websecure
+      - traefik.http.routers.whoami-https.tls=true
+      - traefik.http.routers.whoami-https.tls.certresolver=le
+    restart: unless-stopped
