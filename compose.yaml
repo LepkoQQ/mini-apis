@@ -5,8 +5,11 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./mini-apis/api:/app/api:delegated,rw
-      - ./mini-apis/app.py:/app/app.py:delegated,rw
+      - ./data:/app/data:rw
+      - ./mini-apis/api:/app/api:rw
+      - ./mini-apis/app.py:/app/app.py:rw
     environment:
       - FLASK_ENV=development
       - FLASK_DEBUG=1
+      - VALSTORE_DB_PATH=/app/data/valstore.db
+      - VALSTORE_API_KEY=dBxrJbzLw6lC5mxg2Qrh5aqb4YbWyMq2

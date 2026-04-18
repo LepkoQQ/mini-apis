@@ -9,6 +9,7 @@ from api.valstore.db import init_db as init_valstore_db
 app = Flask(__name__)
 app.url_map.strict_slashes = False
 app.config["VALSTORE_DB_PATH"] = os.environ.get("VALSTORE_DB_PATH", "valstore.db")
+app.config["VALSTORE_API_KEY"] = os.environ.get("VALSTORE_API_KEY", "")
 
 init_valstore_db(app)
 app.register_blueprint(valstore_bp, url_prefix="/valstore")

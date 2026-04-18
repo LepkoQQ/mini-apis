@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from flask import Blueprint, Response, request
+from flask import Blueprint, Response, current_app, request
 
 from api.response import json_error, json_ok
 from api.valstore.db import get_db
@@ -9,6 +9,17 @@ from api.valstore.db import get_db
 bp = Blueprint("valstore", __name__)
 
 _TIMESTAMP = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+
+@bp.before_request
+def require_api_key() -> tuple[Response, int] | None:
+    api_key: str = current_app.config.get("VALSTORE_API_KEY", "")
+    if not api_key:
+        return json_error("VALSTORE_API_KEY is not configured", 500)
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {api_key}":
+        return json_error("unauthorized", 401)
+    return None
 
 
 def _not_found(group: str, key: str) -> tuple[Response, int]:
