@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 from flask import Blueprint, Response, current_app, request
@@ -8,7 +9,19 @@ from api.valstore.db import get_db
 
 bp = Blueprint("valstore", __name__)
 
+_BULK_MAX = 50
+_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-:]+$")
 _TIMESTAMP = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+
+def _invalid_name(label: str, name: str) -> tuple[Response, int] | None:
+    if not _NAME_RE.match(name):
+        return json_error(f"{label} name contains invalid characters", 400)
+    return None
+
+
+def _not_found(group: str, key: str) -> tuple[Response, int]:
+    return json_error(f"key '{key}' not found in group '{group}'", 404)
 
 
 @bp.before_request
@@ -22,25 +35,55 @@ def require_api_key() -> tuple[Response, int] | None:
     return None
 
 
-def _not_found(group: str, key: str) -> tuple[Response, int]:
-    return json_error(f"key '{key}' not found in group '{group}'", 404)
-
-
 @bp.get("/")
 def list_groups() -> tuple[Response, int]:
     db = get_db()
     rows = db.execute(
-        "SELECT group_name, COUNT(*) as key_count FROM valstore GROUP BY group_name ORDER BY group_name"
+        "SELECT group_name FROM valstore GROUP BY group_name ORDER BY group_name"
     ).fetchall()
 
-    groups: list[dict[str, Any]] = [
-        {"group": row["group_name"], "key_count": row["key_count"]} for row in rows
-    ]
+    groups: list[str] = [row["group_name"] for row in rows]
     return json_ok(data={"groups": groups})
 
 
 @bp.get("/<group>")
 def list_keys(group: str) -> tuple[Response, int]:
+    if err := _invalid_name("group", group):
+        return err
+
+    # bulk get when ?keys= is provided
+    raw_keys = request.args.get("keys", None)
+    if raw_keys is not None:
+        keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+        if not keys:
+            return json_error("'keys' query param is empty", 400)
+        if len(keys) > _BULK_MAX:
+            return json_error(f"number of keys exceeds maximum of {_BULK_MAX}", 400)
+        keys_set = set(keys)
+        for k in keys_set:
+            if err := _invalid_name("key", k):
+                return err
+
+        db = get_db()
+        placeholders = ",".join("?" * len(keys_set))
+        rows = db.execute(
+            f"SELECT key, value, created_at, updated_at FROM valstore"
+            f" WHERE group_name = ? AND key IN ({placeholders})",
+            (group, *keys_set),
+        ).fetchall()
+
+        found = {
+            row["key"]: {
+                "value": json.loads(row["value"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        }
+        missing = [k for k in keys_set if k not in found]
+        return json_ok(data={"found": found, "missing": missing})
+
+    # paginated key listing
     try:
         page = int(request.args.get("page", "1"))
         per_page = int(request.args.get("per_page", "20"))
@@ -49,6 +92,8 @@ def list_keys(group: str) -> tuple[Response, int]:
 
     if page < 1 or per_page < 1:
         return json_error("page and per_page must be positive integers", 400)
+    if per_page > _BULK_MAX:
+        return json_error(f"per_page exceeds maximum of {_BULK_MAX}", 400)
 
     offset = (page - 1) * per_page
     db = get_db()
@@ -62,34 +107,32 @@ def list_keys(group: str) -> tuple[Response, int]:
         return json_error(f"group '{group}' not found", 404)
 
     rows = db.execute(
-        "SELECT key, created_at, updated_at FROM valstore"
+        "SELECT key FROM valstore"
         " WHERE group_name = ? ORDER BY key LIMIT ? OFFSET ?",
         (group, per_page, offset),
     ).fetchall()
 
-    items: list[dict[str, Any]] = [
-        {
-            "key": row["key"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
-        for row in rows
-    ]
+    key_list: list[str] = [row["key"] for row in rows]
 
     result: dict[str, Any] = {
         "total": total,
         "page": page,
         "per_page": per_page,
-        "items": items,
+        "keys": key_list,
     }
     return json_ok(data=result)
 
 
 @bp.get("/<group>/<key>")
 def get_value(group: str, key: str) -> tuple[Response, int]:
+    if err := _invalid_name("group", group):
+        return err
+    if err := _invalid_name("key", key):
+        return err
+
     db = get_db()
     row = db.execute(
-        "SELECT group_name, key, value, created_at, updated_at"
+        "SELECT value, created_at, updated_at"
         " FROM valstore WHERE group_name = ? AND key = ?",
         (group, key),
     ).fetchone()
@@ -98,8 +141,6 @@ def get_value(group: str, key: str) -> tuple[Response, int]:
         return _not_found(group, key)
 
     data: dict[str, Any] = {
-        "group": row["group_name"],
-        "key": row["key"],
         "value": json.loads(row["value"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -109,6 +150,11 @@ def get_value(group: str, key: str) -> tuple[Response, int]:
 
 @bp.put("/<group>/<key>")
 def put_value(group: str, key: str) -> tuple[Response, int]:
+    if err := _invalid_name("group", group):
+        return err
+    if err := _invalid_name("key", key):
+        return err
+
     body = request.get_json(silent=True)
     if body is None:
         return json_error("request body must be valid JSON", 400)
@@ -141,6 +187,11 @@ def put_value(group: str, key: str) -> tuple[Response, int]:
 
 @bp.delete("/<group>/<key>")
 def delete_value(group: str, key: str) -> tuple[Response, int]:
+    if err := _invalid_name("group", group):
+        return err
+    if err := _invalid_name("key", key):
+        return err
+
     db = get_db()
     cursor = db.execute(
         "DELETE FROM valstore WHERE group_name = ? AND key = ?",
