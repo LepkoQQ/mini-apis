@@ -1,0 +1,24 @@
+name: Check Python Formatting and Types
+on:
+  push:
+    branches:
+      - "main"
+jobs:
+  check_python:
+    name: Check Python Formatting and Types
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install requirements
+        working-directory: ./mini-apis
+        run: pip install -r requirements.txt
+
+      - name: Check formatting and types
+        run: ./check.sh

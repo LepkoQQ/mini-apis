@@ -1,0 +1,12 @@
+services:
+  web:
+    build: ./mini-apis
+    command: ["python", "app.py"]
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mini-apis/api:/app/api:delegated,rw
+      - ./mini-apis/app.py:/app/app.py:delegated,rw
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
