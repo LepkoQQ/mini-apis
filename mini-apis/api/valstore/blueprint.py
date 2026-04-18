@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime
 from typing import Any
 
 from flask import Blueprint, Response, current_app, request
@@ -183,6 +184,28 @@ def put_value(group: str, key: str) -> tuple[Response, int]:
         )
         db.commit()
         return json_ok("updated")
+
+
+@bp.delete("/<group>")
+def delete_old_keys(group: str) -> tuple[Response, int]:
+    if err := _invalid_name("group", group):
+        return err
+
+    before = request.args.get("before", "").strip()
+    if not before:
+        return json_error("'before' query param is required", 400)
+    try:
+        datetime.fromisoformat(before)
+    except ValueError:
+        return json_error("'before' must be a valid ISO-8601 timestamp", 400)
+
+    db = get_db()
+    cursor = db.execute(
+        "DELETE FROM valstore WHERE group_name = ? AND created_at < ?",
+        (group, before),
+    )
+    db.commit()
+    return json_ok(data={"deleted": cursor.rowcount})
 
 
 @bp.delete("/<group>/<key>")
