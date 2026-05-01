@@ -28,6 +28,7 @@ def json_ok(
 def json_error(
     message: str,
     status_code: StatusError = 400,
+    error: str | None = None,
 ) -> tuple[Response, int]:
     json_data = jsonify(
         {
@@ -36,7 +37,7 @@ def json_error(
             "status": HTTP_STATUS_CODES[status_code],
             "message": message,
             "data": None,
-            "error": message,
+            "error": error or message,
         }
     )
     return json_data, status_code

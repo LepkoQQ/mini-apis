@@ -5,6 +5,7 @@ from flask import Flask, Response
 from api.response import json_ok
 from api.valstore.blueprint import bp as valstore_bp
 from api.valstore.db import init_db as init_valstore_db
+from api.weather.blueprint import bp as weather_bp
 
 app = Flask(__name__)
 app.url_map.strict_slashes = False
@@ -13,6 +14,8 @@ app.config["VALSTORE_API_KEY"] = os.environ.get("VALSTORE_API_KEY", "")
 
 init_valstore_db(app)
 app.register_blueprint(valstore_bp, url_prefix="/valstore")
+
+app.register_blueprint(weather_bp, url_prefix="/weather")
 
 
 @app.get("/")
