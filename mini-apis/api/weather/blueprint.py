@@ -1,3 +1,4 @@
+import time
 from typing import Any
 
 import requests
@@ -9,6 +10,16 @@ bp = Blueprint("weather", __name__)
 
 
 API_URL = "https://vreme.arso.gov.si/api/1.0/location/?lang=sl&location=Ljubljana"
+
+_CACHE_TTL = 5 * 60  # 5 minutes
+
+_cache: dict[str, Any] = {
+    "fetched_at": 0.0,
+    "ts_observation": None,
+    "ts_forecast1h": None,
+    "ts_forecast24h": None,
+    "response_data": None,
+}
 
 
 def _fetch_weather() -> tuple[dict[str, Any] | None, tuple[Response, int] | None]:
@@ -188,11 +199,35 @@ def _normalize_forecast(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 @bp.get("/")
 def get_weather() -> tuple[Response, int]:
+    now_ts = time.monotonic()
+
+    # Return cached response if within TTL
+    if (
+        _cache["response_data"] is not None
+        and now_ts - _cache["fetched_at"] < _CACHE_TTL
+    ):
+        return json_ok(data=_cache["response_data"])
+
     data, error_res = _fetch_weather()
     if error_res:
         return error_res
     if data is None:
         return json_error("No data received from weather API", 500)
+
+    _cache["fetched_at"] = now_ts
+
+    ts_observation = _safe_get(data, "observation", "tsUpdated")
+    ts_forecast1h = _safe_get(data, "forecast1h", "tsUpdated")
+    ts_forecast24h = _safe_get(data, "forecast24h", "tsUpdated")
+
+    # Reuse cached response if nothing has changed upstream
+    if (
+        _cache["response_data"] is not None
+        and ts_observation == _cache["ts_observation"]
+        and ts_forecast1h == _cache["ts_forecast1h"]
+        and ts_forecast24h == _cache["ts_forecast24h"]
+    ):
+        return json_ok(data=_cache["response_data"])
 
     observation = _safe_get(data, "observation")
     title = _safe_get(observation, "features", 0, "properties", "title")
@@ -204,12 +239,17 @@ def get_weather() -> tuple[Response, int]:
     forecast24h = _safe_get(data, "forecast24h")
     daily = _normalize_forecast(forecast24h)
 
-    return json_ok(
-        data={
-            "title": title,
-            "now": now,
-            "hourly": hourly,
-            "daily": daily,
-            "raw": data,
-        }
-    )
+    response_data = {
+        "title": title,
+        "now": now,
+        "hourly": hourly,
+        "daily": daily,
+        # "raw": data,
+    }
+
+    _cache["ts_observation"] = ts_observation
+    _cache["ts_forecast1h"] = ts_forecast1h
+    _cache["ts_forecast24h"] = ts_forecast24h
+    _cache["response_data"] = response_data
+
+    return json_ok(data=response_data)
