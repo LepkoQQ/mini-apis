@@ -1,6 +1,7 @@
 import os
 
 from flask import Flask, Response
+from flask_cors import CORS
 
 from api.response import json_ok
 from api.valstore.blueprint import bp as valstore_bp
@@ -8,6 +9,8 @@ from api.valstore.db import init_db as init_valstore_db
 from api.weather.blueprint import bp as weather_bp
 
 app = Flask(__name__)
+CORS(app)
+
 app.url_map.strict_slashes = False
 app.config["VALSTORE_DB_PATH"] = os.environ.get("VALSTORE_DB_PATH", "valstore.db")
 app.config["VALSTORE_API_KEY"] = os.environ.get("VALSTORE_API_KEY", "")
