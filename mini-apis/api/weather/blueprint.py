@@ -1,8 +1,10 @@
 import time
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import requests
 from flask import Blueprint, Response
+from lxml import etree
 
 from api.response import json_error, json_ok
 
@@ -10,6 +12,7 @@ bp = Blueprint("weather", __name__)
 
 
 API_URL = "https://vreme.arso.gov.si/api/1.0/location/?lang=sl&location=Ljubljana"
+API_URL_AMS = "https://meteo.arso.gov.si/uploads/probase/www/observ/surface/text/sl/observationAms_LJUBL-ANA_BEZIGRAD_latest.xml"
 
 _CACHE_TTL = 5 * 60  # 5 minutes
 
@@ -18,6 +21,12 @@ _cache: dict[str, Any] = {
     "ts_observation": None,
     "ts_forecast1h": None,
     "ts_forecast24h": None,
+    "response_data": None,
+}
+_cache_ams: dict[str, Any] = {
+    "fetched_at": 0.0,
+    "ts_updated": None,
+    "ts_valid": None,
     "response_data": None,
 }
 
@@ -29,6 +38,15 @@ def _fetch_weather() -> tuple[dict[str, Any] | None, tuple[Response, int] | None
         return response.json(), None
     except requests.RequestException as e:
         return None, json_error("Failed to fetch weather data", 500, str(e))
+
+
+def _fetch_weather_ams() -> tuple[str | None, tuple[Response, int] | None]:
+    try:
+        response = requests.get(API_URL_AMS, timeout=5)
+        response.raise_for_status()
+        return response.text, None
+    except requests.RequestException as e:
+        return None, json_error("Failed to fetch weather data (AMS)", 500, str(e))
 
 
 def _safe_float(value: Any) -> float | None:
@@ -251,5 +269,118 @@ def get_weather() -> tuple[Response, int]:
     _cache["ts_forecast1h"] = ts_forecast1h
     _cache["ts_forecast24h"] = ts_forecast24h
     _cache["response_data"] = response_data
+
+    return json_ok(data=response_data)
+
+
+def _normalize_weather_xml_datapoint(
+    met_data: etree._Element,
+    icon_base: str,
+) -> dict[str, Any]:
+    ts_valid = met_data.findtext("tsValid_issued_RFC822") or ""
+    time = parsedate_to_datetime(ts_valid).isoformat()
+    wwsyn_icon = met_data.findtext("nn_icon-wwsyn_icon") or ""
+    icon = f"{icon_base}{wwsyn_icon}.png"
+
+    temperature = {
+        "value": _safe_int(met_data.findtext("t")),
+        "unit": met_data.findtext("t_var_unit"),
+    }
+    humidity = {
+        "value": _safe_int(met_data.findtext("rh")),
+        "unit": met_data.findtext("rh_var_unit"),
+    }
+    pressure = {
+        "value": _safe_int(met_data.findtext("msl")),
+        "unit": met_data.findtext("msl_var_unit"),
+    }
+
+    _wind_direction = _en_compass(met_data.findtext("dd_shortText") or "")
+    _wind_speed_text = met_data.findtext("ff_icon")
+    _wind_icon = f"{icon_base}{_wind_speed_text}{_wind_direction}.png"
+    _wind_speed = _safe_int(met_data.findtext("ff_val_kmh"))
+    _any_wind = _wind_speed is not None and _wind_speed > 0
+    wind = {
+        "speed": {
+            "value": _wind_speed if _any_wind else None,
+            "unit": "km/h",
+        },
+        "direction": {
+            "value": _wind_direction if _any_wind else None,
+            "icon": _wind_icon if _any_wind else None,
+        },
+        "gusts": {
+            "value": _safe_int(met_data.findtext("ffmax_val_kmh")),
+            "unit": "km/h",
+        },
+    }
+
+    percipitation = {
+        "value": _safe_float(met_data.findtext("tp_1h_acc")),
+        "unit": met_data.findtext("tp_1h_acc_var_unit"),
+    }
+
+    return {
+        "time": time,
+        "icon": icon,
+        "temperature": temperature,
+        "humidity": humidity,
+        "pressure": pressure,
+        "wind": wind,
+        "percipitation": percipitation,
+    }
+
+
+@bp.get("/ams")
+def get_weather_ams() -> tuple[Response, int]:
+    now_ts = time.monotonic()
+
+    # Return cached response if within TTL
+    if (
+        _cache_ams["response_data"] is not None
+        and now_ts - _cache_ams["fetched_at"] < _CACHE_TTL
+    ):
+        return json_ok(data=_cache_ams["response_data"])
+
+    data, error_res = _fetch_weather_ams()
+    if error_res:
+        return error_res
+    if data is None:
+        return json_error("No data received from weather API (AMS)", 500)
+
+    _cache_ams["fetched_at"] = now_ts
+
+    xml = etree.fromstring(data.encode("utf-8"))
+    met_data = xml.find(".//metData")
+    ts_valid = None
+    ts_updated = None
+    if met_data is not None:
+        ts_valid = met_data.findtext("tsValid_issued_RFC822")
+        ts_updated = met_data.findtext("tsUpdated_RFC822")
+
+    if met_data is None or ts_valid is None or ts_updated is None:
+        return json_error("Invalid data received from weather API (AMS)", 500)
+
+    # Reuse cached response if nothing has changed upstream
+    if (
+        _cache_ams["response_data"] is not None
+        and ts_valid == _cache_ams["ts_valid"]
+        and ts_updated == _cache_ams["ts_updated"]
+    ):
+        return json_ok(data=_cache_ams["response_data"])
+
+    title = met_data.findtext("domain_longTitle")
+    icon_base = xml.findtext("icon_url_base") or ""
+    now = _normalize_weather_xml_datapoint(met_data, icon_base)
+
+    response_data = {
+        "title": title,
+        "now": now,
+        # "raw": data,
+    }
+
+    _cache_ams["ts_valid"] = ts_valid
+    _cache_ams["ts_updated"] = ts_updated
+    _cache_ams["response_data"] = response_data
 
     return json_ok(data=response_data)
