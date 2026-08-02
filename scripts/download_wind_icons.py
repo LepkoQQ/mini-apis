@@ -23,7 +23,15 @@ dd_icons = [
 
 ICONS = [f"{ff}{dd}" for ff in ff_icons for dd in dd_icons]
 
-OUT_DIR = Path(__file__).parent.parent / "mini-apis" / "api" / "weather" / "icons" / "wind"
+OUT_DIR = (
+    Path(__file__).parent.parent
+    / "mini-apis"
+    / "api"
+    / "weather"
+    / "static"
+    / "icons"
+    / "wind"
+)
 
 
 def main():

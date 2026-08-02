@@ -1,6 +1,8 @@
 import time
+from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 from flask import Blueprint, Response, url_for
@@ -94,11 +96,14 @@ def _en_compass(text: str) -> str | None:
 
 
 def _en_wind_speed(text: str) -> str | None:
-    if "šibek" in text or "light" in text:
+    light = ["šibek", "šibko", "light"]
+    mod = ["zmeren", "zmerno", "mod"]
+    heavy = ["močan", "močen", "močno", "heavy"]
+    if any(word in text for word in light):
         return "light"
-    elif "zmeren" in text or "mod" in text:
+    elif any(word in text for word in mod):
         return "mod"
-    elif "močan" in text or "močen" in text or "heavy" in text:
+    elif any(word in text for word in heavy):
         return "heavy"
     return "light"
 
@@ -106,11 +111,10 @@ def _en_wind_speed(text: str) -> str | None:
 def _normalize_weather_datapoint(
     tl: dict[str, Any],
     params: dict[str, Any],
-    icon_base: str,
-    icon_base_wind: str,
 ) -> dict[str, Any]:
     time = _safe_get(tl, "valid")
-    icon = f"{icon_base}{_safe_get(tl, 'clouds_icon_wwsyn_icon')}.svg"
+    _icon_name = _safe_get(tl, "clouds_icon_wwsyn_icon")
+    icon = url_for("weather.static", filename=f"icons/weather/{_icon_name}.svg")
 
     if "t" in tl:
         temperature = {
@@ -187,14 +191,12 @@ def _normalize_weather_datapoint(
 def _normalize_weather(data: dict[str, Any]) -> dict[str, Any]:
     props = _safe_get(data, "features", 0, "properties")
     params = _safe_get(data, "params")
-    icon_base = _safe_get(data, "icon_base_url") or ""
-    icon_base_wind = icon_base.replace("/weather/", "/graf/") if icon_base else ""
 
     day = _safe_get(props, "days", 0)
     sunrise = _safe_get(day, "sunrise")
     sunset = _safe_get(day, "sunset")
     tl = _safe_get(day, "timeline", 0)
-    ret = _normalize_weather_datapoint(tl, params, icon_base, icon_base_wind)
+    ret = _normalize_weather_datapoint(tl, params)
 
     return {
         "sunrise": sunrise,
@@ -206,15 +208,13 @@ def _normalize_weather(data: dict[str, Any]) -> dict[str, Any]:
 def _normalize_forecast(data: dict[str, Any]) -> list[dict[str, Any]]:
     props = _safe_get(data, "features", 0, "properties")
     params = _safe_get(data, "params")
-    icon_base = _safe_get(data, "icon_base_url") or ""
-    icon_base_wind = icon_base.replace("/weather/", "/graf/") if icon_base else ""
 
     ret = []
     days = _safe_get(props, "days")
     for day in days:
         timeline = _safe_get(day, "timeline")
         for tl in timeline:
-            r = _normalize_weather_datapoint(tl, params, icon_base, icon_base_wind)
+            r = _normalize_weather_datapoint(tl, params)
             ret.append(r)
 
     return ret
@@ -278,14 +278,81 @@ def get_weather() -> tuple[Response, int]:
     return json_ok(data=response_data)
 
 
-def _normalize_weather_xml_datapoint(
-    met_data: etree._Element,
-    icon_base: str,
-) -> dict[str, Any]:
+def _fix_weather_icon(
+    icon_name: str,
+    time_dt: datetime,
+    sunrise_dt: datetime,
+    sunset_dt: datetime,
+) -> str | None:
+    if not icon_name:
+        return None
+    icon_parts = icon_name.split("_")
+
+    clouds = None
+    phenom = None
+    tod = None
+
+    if len(icon_parts) == 3:
+        clouds, phenom, tod = icon_parts
+    elif len(icon_parts) == 2:
+        if icon_parts[1] in ["day", "night"]:
+            clouds, tod = icon_parts
+        else:
+            clouds, phenom = icon_parts
+    elif len(icon_parts) == 1:
+        clouds = icon_parts[0]
+
+    if tod is None:
+        if time_dt < sunrise_dt or time_dt > sunset_dt:
+            tod = "night"
+        else:
+            tod = "day"
+
+    if phenom:
+        intensities = ["light", "mod", "heavy"]
+        if not any(phenom.startswith(intensity) for intensity in intensities):
+            phenom = f"mod{phenom}"
+
+    if clouds == "modCloudy":
+        clouds = "prevCloudy"
+    elif clouds == "slightCloudy":
+        clouds = "partCloudy"
+    elif clouds == "mostClear":
+        clouds = "clear"
+
+    if clouds == "clear":
+        return f"{clouds}_{tod}"
+
+    return f"{clouds}_{phenom}_{tod}"
+
+
+def _parse_datetime(dt_str: str) -> datetime:
+    if dt_str.endswith(" CEST"):
+        dt_str = dt_str.replace(" CEST", "")
+    if dt_str.endswith(" CET"):
+        dt_str = dt_str.replace(" CET", "")
+    dt = datetime.strptime(dt_str, "%d.%m.%Y %H:%M")
+    dt = dt.replace(tzinfo=ZoneInfo("Europe/Ljubljana"))
+    return dt
+
+
+def _normalize_weather_xml_datapoint(met_data: etree._Element) -> dict[str, Any]:
     ts_valid = met_data.findtext("tsValid_issued_RFC822") or ""
-    time = parsedate_to_datetime(ts_valid).isoformat()
-    wwsyn_icon = met_data.findtext("nn_icon-wwsyn_icon") or ""
-    icon = f"{icon_base}{wwsyn_icon}.png"
+    time_dt = parsedate_to_datetime(ts_valid)
+    time = time_dt.isoformat()
+
+    sunrise_dt = _parse_datetime(met_data.findtext("sunrise") or "")
+    sunrise = sunrise_dt.isoformat()
+    sunset_dt = _parse_datetime(met_data.findtext("sunset") or "")
+    sunset = sunset_dt.isoformat()
+
+    _wwsyn_icon = met_data.findtext("nn_icon-wwsyn_icon") or ""
+    _icon_name = _fix_weather_icon(_wwsyn_icon, time_dt, sunrise_dt, sunset_dt)
+    icon = (
+        url_for("weather.static", filename=f"icons/weather/{_icon_name}.svg")
+        if _icon_name
+        else None
+    )
 
     temperature = {
         "value": _safe_int(met_data.findtext("t")),
@@ -331,6 +398,8 @@ def _normalize_weather_xml_datapoint(
     }
 
     return {
+        "sunrise": sunrise,
+        "sunset": sunset,
         "time": time,
         "icon": icon,
         "temperature": temperature,
@@ -380,8 +449,7 @@ def get_weather_ams() -> tuple[Response, int]:
         return json_ok(data=_cache_ams["response_data"])
 
     title = met_data.findtext("domain_longTitle")
-    icon_base = xml.findtext("icon_url_base") or ""
-    now = _normalize_weather_xml_datapoint(met_data, icon_base)
+    now = _normalize_weather_xml_datapoint(met_data)
 
     response_data = {
         "title": title,
