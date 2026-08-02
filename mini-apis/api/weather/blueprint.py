@@ -3,12 +3,12 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 import requests
-from flask import Blueprint, Response
+from flask import Blueprint, Response, url_for
 from lxml import etree
 
 from api.response import json_error, json_ok
 
-bp = Blueprint("weather", __name__)
+bp = Blueprint("weather", __name__, static_folder="static")
 
 
 API_URL = "https://vreme.arso.gov.si/api/1.0/location/?lang=sl&location=Ljubljana"
@@ -94,13 +94,13 @@ def _en_compass(text: str) -> str | None:
 
 
 def _en_wind_speed(text: str) -> str | None:
-    if "šibek" in text:
+    if "šibek" in text or "light" in text:
         return "light"
-    elif "zmeren" in text:
+    elif "zmeren" in text or "mod" in text:
         return "mod"
-    elif "močan" in text:
+    elif "močan" in text or "močen" in text or "heavy" in text:
         return "heavy"
-    return None
+    return "light"
 
 
 def _normalize_weather_datapoint(
@@ -137,7 +137,12 @@ def _normalize_weather_datapoint(
 
     _wind_direction = _en_compass(_safe_get(tl, "dd_shortText"))
     _wind_speed_text = _en_wind_speed(_safe_get(tl, "ff_shortText"))
-    _wind_icon = f"{icon_base_wind}{_wind_speed_text}{_wind_direction}.svg"
+    _wind_icon = None
+    if _wind_direction and _wind_speed_text:
+        _wind_icon_name = f"{_wind_speed_text}{_wind_direction}"
+        _wind_icon = url_for(
+            "weather.static", filename=f"icons/wind/{_wind_icon_name}.svg"
+        )
     _wind_speed = _safe_int(_safe_get(tl, "ff_val"))
     _any_wind = _wind_speed is not None and _wind_speed > 0
     wind = {
@@ -296,8 +301,13 @@ def _normalize_weather_xml_datapoint(
     }
 
     _wind_direction = _en_compass(met_data.findtext("dd_shortText") or "")
-    _wind_speed_text = met_data.findtext("ff_icon")
-    _wind_icon = f"{icon_base}{_wind_speed_text}{_wind_direction}.png"
+    _wind_speed_text = _en_wind_speed(met_data.findtext("ff_icon") or "")
+    _wind_icon = None
+    if _wind_direction and _wind_speed_text:
+        _wind_icon_name = f"{_wind_speed_text}{_wind_direction}"
+        _wind_icon = url_for(
+            "weather.static", filename=f"icons/wind/{_wind_icon_name}.svg"
+        )
     _wind_speed = _safe_int(met_data.findtext("ff_val_kmh"))
     _any_wind = _wind_speed is not None and _wind_speed > 0
     wind = {
