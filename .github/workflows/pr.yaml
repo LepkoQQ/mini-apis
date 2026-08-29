@@ -1,0 +1,26 @@
+name: Automatic PRs
+on:
+  push:
+    branches:
+      - "main"
+jobs:
+  pull_requests:
+    name: Automatic PRs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+
+      - name: PR from `main` into `prod`
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_URL="$(gh pr list --head main --base prod --state open --json url --jq '.[0].url')"
+          if [ -n "$PR_URL" ]; then
+            echo "PR already exists: $PR_URL"
+          else
+            gh pr create --head main --base prod --title 'Merge `main` into `prod`' --body "🤖"
+          fi
